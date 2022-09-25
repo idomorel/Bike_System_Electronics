@@ -1,12 +1,36 @@
+/*
+Author: Ido Morel
+
+Code built for ESP32-Wroom-32
+
+This is the code for our final year project under the Electronics program.
+---------------------------------------------------------------------------
+TODO:
+Print speed to display
+*/
+
+
+// At first we include the needed libraries into our program
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+
+
+//Then we define some pin values.
+//We use #define because it is helpful for coding during development
+//and only used by the compiler on the computer so it doesn't take space on our microcontroller.
+
+#define nextButton 99    //The pin number for the button used as the "next page" button
+#define prevButton 99    //The pin number for the button used as the "previous page" button
+#define selButton 99    //The pin number for the button used as the "Select" button
+
 
 volatile byte rotation;
 float timetaken;
 float rpm;
-float dtime;
+//float dtime;
 int velocity = 0;
-unsigned long pevtime = 0;
+int displayMode = 0;
+unsigned long prevTime = 0;
 long unsigned int timer = 0; 
 
 
@@ -15,25 +39,64 @@ LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address to 0x27 for a 16 char
 void setup()
 {
   Serial.begin(115200);
-
+  displayMode = 0; //Default display mode is 0
   rotation = 0;
   rpm = 0;
-  pevtime = 0;
+  prevTime = 0;
 
   attachInterrupt(13, magnet_detect, RISING);
 
-  lcd.init();
-  pinMode(13, INPUT);                      // initialize the lcd
-  //lcd.init();
-  // Print a message to the LCD.
+  lcd.init(); // Initialize the LCD
+  pinMode(13, INPUT);
+  //Configure our button pins to act as input pins, with the internal pullup resistor active
+  pinMode(nextButton, INPUT_PULLUP);
+  pinMode(prevButton, INPUT_PULLUP);
+  pinMode(selButton, INPUT_PULLUP);
+
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(1, 0);
+  // Print a startup message to the LCD.
   lcd.print("Initializing...");
   lcd.setCursor(1, 1);
   lcd.print("System Active!");
   delay(3000);
   lcd.clear();
+}
+
+
+
+
+void loop()
+{
+  
+  //dtime = millis();
+  if (rotation >= 2)
+  {
+    timetaken = millis() - prevTime; //time in millisec
+    rpm = (1000 / timetaken) * 60;
+    prevTime = millis();
+    rotation = 0;
+  }
+  velocity = (0.035) * rpm * 0.37699;  // ACTUAL CODE KM/hr
+  switch (displayMode)
+  
+  lcd.setCursor(1,0);
+  lcd.print("Speed:");
+  lcd.setCursor(8,0);
+  if (millis() - timer > 3000){
+    //lcd.clear();
+    velocity = 0;
+  } 
+  
+  
+}
+
+
+void magnet_detect()//Called whenever a magnet is detected
+{
+  timer = millis();
+  rotation++;
 }
 
 
@@ -48,35 +111,6 @@ void setup()
 //   //lcd.print(analogRead(13));
 // }
 
-void loop()
-{
-//to drop down to zero when braked.
-//lcd.clear();
-
-dtime = millis();
-if (rotation >= 2)
-{
-timetaken = millis() - pevtime; //time in millisec
-rpm = (1000 / timetaken) * 60;
-pevtime = millis();
-rotation = 0;
-
-Serial.write(velocity);
-}
-velocity = (0.035) * rpm * 0.37699;  // ACTUAL CODE KM/hr
-Serial.println(timer);
-lcd.setCursor(1,0);
-lcd.print("Speed:");
-lcd.setCursor(8,0);
-if (millis() - timer > 2000){
-  velocity = 0;
-  lcd.clear();
-
-} 
-lcd.print(velocity);
-}
-
-
 // void magnet_detect()//Called whenever a magnet is detected
 // {
 //   lcd.setCursor(1,1);
@@ -85,16 +119,10 @@ lcd.print(velocity);
 //   dtime = millis();
 //   if (rotation >= 2)
 //   {
-// 	timetaken = millis() - pevtime; //time in millisec
+// 	timetaken = millis() - prevTime; //time in millisec
 // 	rpm = (1000 / timetaken) * 60;
-// 	pevtime = millis();
+// 	prevTime = millis();
 // 	rotation = 0;
 // 	Serial.write(velocity);
 //   }
 // }
-
-void magnet_detect()//Called whenever a magnet is detected
-{
-timer = millis();
-rotation++;
-}
