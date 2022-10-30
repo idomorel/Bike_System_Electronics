@@ -19,9 +19,9 @@ Print speed to display
 //We use #define because it is helpful for coding during development
 //and only used by the compiler on the computer so it doesn't take space on our microcontroller.
 
-#define nextButton 99    //The pin number for the button used as the "next page" button
-#define prevButton 99    //The pin number for the button used as the "previous page" button
-#define selButton 99    //The pin number for the button used as the "Select" button
+#define nextButton 27    //The pin number for the button used as the "next page" button
+#define prevButton 26    //The pin number for the button used as the "previous page" button
+#define selButton 25    //The pin number for the button used as the "Select" button
 
 
 volatile byte rotation;
@@ -39,7 +39,7 @@ long unsigned int speedChange = 0;
 bool speedUnit = false; // false is km/h, true is mph.
 
 
-LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address to 0x27 for a 16 chars and 2 line display
+LiquidCrystal_I2C lcd(0x27, 16, 2); // set the LCD address to 0x27 for a 16 chars and 2 line display
 
 void setup()
 {
@@ -83,8 +83,8 @@ void loop()
     prevTime = millis();
     rotation = 0;
     velocity = (0.035) * rpm * 0.37699;  // ACTUAL CODE KM/hr
-
   }
+  
 
   if (millis() - timer > 3000){
     lcd.clear();
@@ -99,11 +99,16 @@ void loop()
   }
   switch (displayMode){
     case 0:
+      if(velocity < 10 && velocity != 0 && lastVelocity > 9){
+        lcd.clear();
+      }
       lcd.setCursor(1,0);
       lcd.print("Speed:");
       lcd.setCursor(8,0);
       lcd.print(velocity);
       break;
+    case 1:
+    
   }
   
   
