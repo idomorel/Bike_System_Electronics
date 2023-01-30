@@ -8,6 +8,7 @@ This is the code for our final year project under the Electronics program.
 TODO:
 Implement Wifi Capabillities
 */
+#include "esp_system.h"
 
 #define SDSPI   // Didn't know what SD module we have so I put a selection here
 #define SD_CS 5 // SD card chip select pin
@@ -23,6 +24,8 @@ Implement Wifi Capabillities
 // At first we include the needed libraries into our program
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+
+#define tireDiameter 0.05 // The diameter of the tire in meters
 
 // Then we define some pin values.
 // We use #define because it is helpful for coding during development
@@ -67,7 +70,8 @@ long unsigned int speedChange = 0;
 bool speedUnit = false; // false is km/h, true is mph.
 bool zeroVelocity = false;
 
-bool startRecording = false;
+bool startRecording = true;
+bool buttonChange = false;
 int recordingResolution = 2000;
 unsigned long recordingTimer = 0;
 unsigned long recordingTime = 0;
@@ -109,10 +113,11 @@ void setup()
   rpm = 0;
   prevTime = 0;
 
-  attachInterrupt(13, magnet_detect, RISING);
+  attachInterrupt(digitalPinToInterrupt(12), magnet_detect, RISING);
 
   lcd.init(); // Initialize the LCD
-  pinMode(13, INPUT);
+  pinMode(12, INPUT_PULLDOWN);
+  pinMode(2, OUTPUT);
   // Configure our button pins to act as input pins, with the internal pullup resistor active
   pinMode(nextButton, INPUT_PULLUP);
   pinMode(prevButton, INPUT_PULLUP);
@@ -142,6 +147,8 @@ void setup()
     return; // init failed
   }
   Serial.println("SD card initialization done.");
+  myFile = SD.open("/data.txt", FILE_WRITE);
+  myFile.close();
 
   lcd.backlight();
   lcd.clear();
@@ -198,6 +205,7 @@ void setButtonsState()
     if (nextButtonReading != nextButtonState)
     {
       nextButtonState = nextButtonReading;
+      buttonChange = true;
     }
   }
   if ((millis() - prevButtonLastDebounceTime) > debounceDelay)
@@ -205,6 +213,7 @@ void setButtonsState()
     if (prevButtonReading != prevButtonState)
     {
       prevButtonState = prevButtonReading;
+      buttonChange = true;
     }
   }
   if ((millis() - selButtonLastDebounceTime) > debounceDelay)
@@ -212,8 +221,10 @@ void setButtonsState()
     if (selButtonReading != selButtonState)
     {
       selButtonState = selButtonReading;
+      buttonChange = true;
     }
   }
+  
 
   nextButtonLastState = nextButtonReading;
   prevButtonLastState = prevButtonReading;
@@ -250,7 +261,8 @@ void setSpeed()
     rpm = (1000 / timetaken) * 60;
     prevTime = millis();
     rotation = 0;
-    velocity = (0.035) * rpm * 0.37699; // ACTUAL CODE KM/hr
+    velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 2 * 60; // ACTUAL CODE KM/hr
+    //velocity = (0.035) * rpm * 0.37699; // ACTUAL CODE KM/hr
   }
 
   if (millis() - timer > 3000)
@@ -274,7 +286,7 @@ void setDistance()
 
 void periodicLogToSD()
 {
-  myFile = SD.open("datalog.txt", FILE_WRITE);
+  myFile = SD.open("/data.txt", FILE_WRITE);
   if (myFile)
   {
     myFile.print(millis());
@@ -285,9 +297,18 @@ void periodicLogToSD()
     myFile.println();
     myFile.close();
   }
+  myFile = SD.open("/data.txt");
+  if (myFile)
+  {
+    Serial.print("SD: ");
+    while (myFile.available()){
+      Serial.print((char)myFile.read());
+    }
+    myFile.close();
+  }
   else
   {
-    Serial.println("error opening datalog.txt");
+    Serial.println("error opening data.txt");
   }
 }
 
@@ -314,7 +335,11 @@ void loop()
     }
   }
 
-  displayModeByButtonState();
+  if (buttonChange == true)
+  {
+    displayModeByButtonState();
+    buttonChange = false;
+  }
   if (displayMode != lastDisplayMode)
   {
     lcd.clear();
@@ -333,7 +358,17 @@ void loop()
   case 1:
     displayDistance();
     break;
+  case 2:
+    displayUnderConstruction();
+    break;
   }
+}
+
+void displayUnderConstruction(){
+  lcd.setCursor(5, 0);
+  lcd.print("Under");
+  lcd.setCursor(2, 1);
+  lcd.print("Construction!");
 }
 
 void displaySpeed()
@@ -387,10 +422,14 @@ void displayDistance()
   lcd.print("m");
 }
 
+
+
 void magnet_detect() // Called whenever a magnet is detected
 {
   timer = millis();
   rotation++;
+  digitalWrite(2, HIGH);
+  //Serial.println("Magnet detected");
 }
 
 // void loop()
