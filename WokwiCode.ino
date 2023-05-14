@@ -8,10 +8,9 @@ This is the code for our final year project under the Electronics program.
 TODO:
 Implement Wifi Capabillities
 */
-#include "esp_system.h"
-
 #define SDSPI   // Didn't know what SD module we have so I put a selection here
 #define SD_CS 5 // SD card chip select pin
+#define tireDiameter 0.05 // The diameter of the tire in meters
 
 #ifdef SDSPI
 
@@ -21,11 +20,20 @@ Implement Wifi Capabillities
 
 #endif
 
-// At first we include the needed libraries into our program
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>
+//Connect the project to the wifi for the website
+const char *ssid = "MakeLab-guest";
+const char *password = "20182018";
 
-#define tireDiameter 0.05 // The diameter of the tire in meters
+// At first we include the needed libraries into our program
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+#include "esp_system.h"
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
 
 // Then we define some pin values.
 // We use #define because it is helpful for coding during development
@@ -78,6 +86,10 @@ unsigned long recordingTime = 0;
 unsigned long recordLogoTimer = 0;
 bool recordLogoState = true;
 
+WebServer server(80);
+
+Adafruit_MPU6050 mpu;
+
 LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address to 0x27 for SIM or 0x3F IRL for a 16 chars and 2 line display
 File myFile;
 
@@ -112,6 +124,32 @@ void setup()
   rotation = 0;
   rpm = 0;
   prevTime = 0;
+
+    WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.println("");
+
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin("esp32")) {
+    Serial.println("MDNS responder started");
+  }
+  server.on("/", handleRoot);
+
+  server.begin();
+  Serial.println("HTTP server started");
+
+
 
   attachInterrupt(digitalPinToInterrupt(12), magnet_detect, RISING);
 
@@ -261,8 +299,7 @@ void setSpeed()
     rpm = (1000 / timetaken) * 60;
     prevTime = millis();
     rotation = 0;
-    velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 2 * 60; // ACTUAL CODE KM/hr
-    //velocity = (0.035) * rpm * 0.37699; // ACTUAL CODE KM/hr
+    velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 60; // ACTUAL CODE KM/hr
   }
 
   if (millis() - timer > 3000)
@@ -314,6 +351,7 @@ void periodicLogToSD()
 
 void loop()
 {
+  server.handleClient();
 
   setButtonsState();
 
@@ -432,6 +470,78 @@ void magnet_detect() // Called whenever a magnet is detected
   //Serial.println("Magnet detected");
 }
 
+void detectAngle() 
+{
+  /* Get new sensor events with the readings */
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  /* Print out the values */
+  Serial.print("c: ");
+  Serial.print(a.acceleration.x);
+  Serial.print(", Y: ");
+  Serial.print(a.acceleration.y);
+  Serial.print(", Z: ");
+  Serial.print(a.acceleration.z);
+  Serial.println(" m/s^2");
+
+
+  Serial.print("Temperature: ");
+  Serial.print(temp.temperature);
+  Serial.println(" degC");
+ 
+if(a.acceleration.x>=5)
+  Serial.print("were going up");
+else if(a.acceleration.x<=-5)
+  Serial.print("were going down");
+else
+  Serial.print("were on a strait line");
+
+  Serial.println("");
+  delay(500);
+}
+
+void handleRoot() {
+  char msg[1500];
+
+  snprintf(msg, 1500,
+           "<html>\
+  <head>\
+    <meta http-equiv='refresh' content='4'/>\
+    <meta name='viewport' content='width=device-width, initial-scale=1'>\
+    <link rel='stylesheet' href='https://use.fontawesome.com/releases/v5.7.2/css/all.css' integrity='sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr' crossorigin='anonymous'>\
+    <title>Bicycle auxiliary system</title>\
+    <style>\
+    html { font-family: Arial; display: inline-block; margin: 0px auto; text-align: center;}\
+    h2 { font-size: 3.0rem; }\
+    p { font-size: 3.0rem; }\
+    .units { font-size: 1.2rem; }\
+    .dht-labels{ font-size: 1.5rem; vertical-align:middle; padding-bottom: 15px;}\
+    </style>\
+  </head>\
+  <body>\
+    <h2>Bicycle auxiliary system!</h2>\
+      <p>\
+      <span class='dht-labels'>Distance </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km</sup>\
+      </p>\
+      <p>\
+        <span class='dht-labels'>Speed </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km/h</sup>\
+        </p>\
+        <p>\
+        <span class='dht-labels'>Avg Speed </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km/h</sup>\
+      </p>\
+  </body>\
+</html>",
+           totalDistance, velocity, velocity
+          );
+  server.send(200, "text/html", msg);
+}
 // void loop()
 // {
 //   if (millis() - dtime > 1000) //to drop down to zero when braked.
