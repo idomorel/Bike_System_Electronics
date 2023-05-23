@@ -21,8 +21,8 @@ Implement Wifi Capabillities
 #endif
 
 //Connect the project to the wifi for the website
-const char *ssid = "MakeLab-guest";
-const char *password = "20182018";
+const char *ssid = "Manor's Wifi ";
+const char *password = "6677889900";
 
 // At first we include the needed libraries into our program
 #include <LiquidCrystal_I2C.h>
@@ -66,6 +66,7 @@ float timetaken;
 float rpm;
 // float dtime;
 int velocity = 0;
+int bikeAngle = 0;
 int lastVelocity = 0;
 unsigned long totalDistance = 0;
 unsigned long lastDistance = 0;
@@ -164,20 +165,31 @@ void setup()
   lcd.createChar(0, recordStep1);
   lcd.createChar(1, recordStep2);
 
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(1, 0);
+  // Print a startup message to the LCD.
+  lcd.print("Initializing...");
+  lcd.setCursor(1, 1);
+  lcd.print("System Active!");
+  delay(3000);
+  lcd.clear();
+
+  //SD.begin(SD_CS);
+  // if (!SD.begin(SD_CS))
+  // {
+  //   Serial.println("Card Mount Failed");
+  //   return;
+  // }
+  // uint8_t cardType = SD.cardType();
+  // if (cardType == CARD_NONE)
+  // {
+  //   Serial.println("No SD card attached");
+  //   return;
+  // }
 
 
-  SD.begin(SD_CS);
-  if (!SD.begin(SD_CS))
-  {
-    Serial.println("Card Mount Failed");
-    return;
-  }
-  uint8_t cardType = SD.cardType();
-  if (cardType == CARD_NONE)
-  {
-    Serial.println("No SD card attached");
-    return;
-  }
+  delay(1000);
   Serial.println("Initializing SD card...");
   if (!SD.begin(SD_CS))
   {
@@ -188,15 +200,76 @@ void setup()
   myFile = SD.open("/data.txt", FILE_WRITE);
   myFile.close();
 
-  lcd.backlight();
-  lcd.clear();
-  lcd.setCursor(1, 0);
-  // Print a startup message to the LCD.
-  lcd.print("Initializing...");
-  lcd.setCursor(1, 1);
-  lcd.print("System Active!");
-  delay(3000);
-  lcd.clear();
+
+
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  Serial.println("MPU6050 Found!");
+
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  Serial.print("Accelerometer range set to: ");
+  switch (mpu.getAccelerometerRange()) {
+  case MPU6050_RANGE_2_G:
+    Serial.println("+-2G");
+    break;
+  case MPU6050_RANGE_4_G:
+    Serial.println("+-4G");
+    break;
+  case MPU6050_RANGE_8_G:
+    Serial.println("+-8G");
+    break;
+  case MPU6050_RANGE_16_G:
+    Serial.println("+-16G");
+    break;
+  }
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  Serial.print("Gyro range set to: ");
+  switch (mpu.getGyroRange()) {
+  case MPU6050_RANGE_250_DEG:
+    Serial.println("+- 250 deg/s");
+    break;
+  case MPU6050_RANGE_500_DEG:
+    Serial.println("+- 500 deg/s");
+    break;
+  case MPU6050_RANGE_1000_DEG:
+    Serial.println("+- 1000 deg/s");
+    break;
+  case MPU6050_RANGE_2000_DEG:
+    Serial.println("+- 2000 deg/s");
+    break;
+  }
+
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
+  Serial.print("Filter bandwidth set to: ");
+  switch (mpu.getFilterBandwidth()) {
+  case MPU6050_BAND_260_HZ:
+    Serial.println("260 Hz");
+    break;
+  case MPU6050_BAND_184_HZ:
+    Serial.println("184 Hz");
+    break;
+  case MPU6050_BAND_94_HZ:
+    Serial.println("94 Hz");
+    break;
+  case MPU6050_BAND_44_HZ:
+    Serial.println("44 Hz");
+    break;
+  case MPU6050_BAND_21_HZ:
+    Serial.println("21 Hz");
+    break;
+  case MPU6050_BAND_10_HZ:
+    Serial.println("10 Hz");
+    break;
+  case MPU6050_BAND_5_HZ:
+    Serial.println("5 Hz");
+    break;
+  }
+
 }
 
 // void displayModeByButton()
@@ -331,6 +404,8 @@ void periodicLogToSD()
     myFile.print(velocity);
     myFile.print(",");
     myFile.print(totalDistance);
+    myFile.print(",");
+    myFile.print(bikeAngle);
     myFile.println();
     myFile.close();
   }
@@ -385,7 +460,7 @@ void loop()
   }
 
   setSpeed();
-
+  detectAngle();
   setDistance();
 
   switch (displayMode)
@@ -475,30 +550,14 @@ void detectAngle()
   /* Get new sensor events with the readings */
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
-
-  /* Print out the values */
-  Serial.print("c: ");
-  Serial.print(a.acceleration.x);
-  Serial.print(", Y: ");
-  Serial.print(a.acceleration.y);
-  Serial.print(", Z: ");
-  Serial.print(a.acceleration.z);
-  Serial.println(" m/s^2");
-
-
-  Serial.print("Temperature: ");
-  Serial.print(temp.temperature);
-  Serial.println(" degC");
- 
-if(a.acceleration.x>=5)
-  Serial.print("were going up");
-else if(a.acceleration.x<=-5)
-  Serial.print("were going down");
-else
-  Serial.print("were on a strait line");
-
+  bikeAngle = g.gyro.x;
+  if(g.gyro.x>=5){
+    Serial.print("We're going up!");}
+  else if(g.gyro.x<=-5){
+    Serial.print("We're going down!");}
+  else{
+    Serial.print("We're not on a slope!");}
   Serial.println("");
-  delay(500);
 }
 
 void handleRoot() {
