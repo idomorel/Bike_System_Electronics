@@ -8,10 +8,9 @@ This is the code for our final year project under the Electronics program.
 TODO:
 Implement Wifi Capabillities
 */
-#include "esp_system.h"
-
 #define SDSPI   // Didn't know what SD module we have so I put a selection here
 #define SD_CS 5 // SD card chip select pin
+#define tireDiameter 0.05 // The diameter of the tire in meters
 
 #ifdef SDSPI
 
@@ -21,11 +20,20 @@ Implement Wifi Capabillities
 
 #endif
 
-// At first we include the needed libraries into our program
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>
+//Connect the project to the wifi for the website
+const char *ssid = "Manor's Wifi ";
+const char *password = "6677889900";
 
-#define tireDiameter 0.05 // The diameter of the tire in meters
+// At first we include the needed libraries into our program
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+#include "esp_system.h"
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
 
 // Then we define some pin values.
 // We use #define because it is helpful for coding during development
@@ -58,6 +66,7 @@ float timetaken;
 float rpm;
 // float dtime;
 int velocity = 0;
+int bikeAngle = 0;
 int lastVelocity = 0;
 unsigned long totalDistance = 0;
 unsigned long lastDistance = 0;
@@ -77,6 +86,10 @@ unsigned long recordingTimer = 0;
 unsigned long recordingTime = 0;
 unsigned long recordLogoTimer = 0;
 bool recordLogoState = true;
+
+WebServer server(80);
+
+Adafruit_MPU6050 mpu;
 
 LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address to 0x27 for SIM or 0x3F IRL for a 16 chars and 2 line display
 File myFile;
@@ -113,6 +126,32 @@ void setup()
   rpm = 0;
   prevTime = 0;
 
+    WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.println("");
+
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin("esp32")) {
+    Serial.println("MDNS responder started");
+  }
+  server.on("/", handleRoot);
+
+  server.begin();
+  Serial.println("HTTP server started");
+
+
+
   attachInterrupt(digitalPinToInterrupt(12), magnet_detect, RISING);
 
   lcd.init(); // Initialize the LCD
@@ -126,20 +165,31 @@ void setup()
   lcd.createChar(0, recordStep1);
   lcd.createChar(1, recordStep2);
 
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(1, 0);
+  // Print a startup message to the LCD.
+  lcd.print("Initializing...");
+  lcd.setCursor(1, 1);
+  lcd.print("System Active!");
+  delay(3000);
+  lcd.clear();
+
+  //SD.begin(SD_CS);
+  // if (!SD.begin(SD_CS))
+  // {
+  //   Serial.println("Card Mount Failed");
+  //   return;
+  // }
+  // uint8_t cardType = SD.cardType();
+  // if (cardType == CARD_NONE)
+  // {
+  //   Serial.println("No SD card attached");
+  //   return;
+  // }
 
 
-  SD.begin(SD_CS);
-  if (!SD.begin(SD_CS))
-  {
-    Serial.println("Card Mount Failed");
-    return;
-  }
-  uint8_t cardType = SD.cardType();
-  if (cardType == CARD_NONE)
-  {
-    Serial.println("No SD card attached");
-    return;
-  }
+  delay(1000);
   Serial.println("Initializing SD card...");
   if (!SD.begin(SD_CS))
   {
@@ -150,15 +200,76 @@ void setup()
   myFile = SD.open("/data.txt", FILE_WRITE);
   myFile.close();
 
-  lcd.backlight();
-  lcd.clear();
-  lcd.setCursor(1, 0);
-  // Print a startup message to the LCD.
-  lcd.print("Initializing...");
-  lcd.setCursor(1, 1);
-  lcd.print("System Active!");
-  delay(3000);
-  lcd.clear();
+
+
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  Serial.println("MPU6050 Found!");
+
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  Serial.print("Accelerometer range set to: ");
+  switch (mpu.getAccelerometerRange()) {
+  case MPU6050_RANGE_2_G:
+    Serial.println("+-2G");
+    break;
+  case MPU6050_RANGE_4_G:
+    Serial.println("+-4G");
+    break;
+  case MPU6050_RANGE_8_G:
+    Serial.println("+-8G");
+    break;
+  case MPU6050_RANGE_16_G:
+    Serial.println("+-16G");
+    break;
+  }
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  Serial.print("Gyro range set to: ");
+  switch (mpu.getGyroRange()) {
+  case MPU6050_RANGE_250_DEG:
+    Serial.println("+- 250 deg/s");
+    break;
+  case MPU6050_RANGE_500_DEG:
+    Serial.println("+- 500 deg/s");
+    break;
+  case MPU6050_RANGE_1000_DEG:
+    Serial.println("+- 1000 deg/s");
+    break;
+  case MPU6050_RANGE_2000_DEG:
+    Serial.println("+- 2000 deg/s");
+    break;
+  }
+
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
+  Serial.print("Filter bandwidth set to: ");
+  switch (mpu.getFilterBandwidth()) {
+  case MPU6050_BAND_260_HZ:
+    Serial.println("260 Hz");
+    break;
+  case MPU6050_BAND_184_HZ:
+    Serial.println("184 Hz");
+    break;
+  case MPU6050_BAND_94_HZ:
+    Serial.println("94 Hz");
+    break;
+  case MPU6050_BAND_44_HZ:
+    Serial.println("44 Hz");
+    break;
+  case MPU6050_BAND_21_HZ:
+    Serial.println("21 Hz");
+    break;
+  case MPU6050_BAND_10_HZ:
+    Serial.println("10 Hz");
+    break;
+  case MPU6050_BAND_5_HZ:
+    Serial.println("5 Hz");
+    break;
+  }
+
 }
 
 // void displayModeByButton()
@@ -261,8 +372,7 @@ void setSpeed()
     rpm = (1000 / timetaken) * 60;
     prevTime = millis();
     rotation = 0;
-    velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 2 * 60; // ACTUAL CODE KM/hr
-    //velocity = (0.035) * rpm * 0.37699; // ACTUAL CODE KM/hr
+    velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 60; // ACTUAL CODE KM/hr
   }
 
   if (millis() - timer > 3000)
@@ -294,6 +404,8 @@ void periodicLogToSD()
     myFile.print(velocity);
     myFile.print(",");
     myFile.print(totalDistance);
+    myFile.print(",");
+    myFile.print(bikeAngle);
     myFile.println();
     myFile.close();
   }
@@ -314,6 +426,7 @@ void periodicLogToSD()
 
 void loop()
 {
+  server.handleClient();
 
   setButtonsState();
 
@@ -347,7 +460,7 @@ void loop()
   }
 
   setSpeed();
-
+  detectAngle();
   setDistance();
 
   switch (displayMode)
@@ -432,6 +545,62 @@ void magnet_detect() // Called whenever a magnet is detected
   //Serial.println("Magnet detected");
 }
 
+void detectAngle() 
+{
+  /* Get new sensor events with the readings */
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  bikeAngle = g.gyro.x;
+  if(g.gyro.x>=5){
+    Serial.print("We're going up!");}
+  else if(g.gyro.x<=-5){
+    Serial.print("We're going down!");}
+  else{
+    Serial.print("We're not on a slope!");}
+  Serial.println("");
+}
+
+void handleRoot() {
+  char msg[1500];
+
+  snprintf(msg, 1500,
+           "<html>\
+  <head>\
+    <meta http-equiv='refresh' content='4'/>\
+    <meta name='viewport' content='width=device-width, initial-scale=1'>\
+    <link rel='stylesheet' href='https://use.fontawesome.com/releases/v5.7.2/css/all.css' integrity='sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr' crossorigin='anonymous'>\
+    <title>Bicycle auxiliary system</title>\
+    <style>\
+    html { font-family: Arial; display: inline-block; margin: 0px auto; text-align: center;}\
+    h2 { font-size: 3.0rem; }\
+    p { font-size: 3.0rem; }\
+    .units { font-size: 1.2rem; }\
+    .dht-labels{ font-size: 1.5rem; vertical-align:middle; padding-bottom: 15px;}\
+    </style>\
+  </head>\
+  <body>\
+    <h2>Bicycle auxiliary system!</h2>\
+      <p>\
+      <span class='dht-labels'>Distance </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km</sup>\
+      </p>\
+      <p>\
+        <span class='dht-labels'>Speed </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km/h</sup>\
+        </p>\
+        <p>\
+        <span class='dht-labels'>Avg Speed </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km/h</sup>\
+      </p>\
+  </body>\
+</html>",
+           totalDistance, velocity, velocity
+          );
+  server.send(200, "text/html", msg);
+}
 // void loop()
 // {
 //   if (millis() - dtime > 1000) //to drop down to zero when braked.
