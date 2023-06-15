@@ -10,7 +10,12 @@ Implement Wifi Capabillities
 */
 #define SDSPI   // Didn't know what SD module we have so I put a selection here
 #define SD_CS 5 // SD card chip select pin
-#define tireDiameter 0.05 // The diameter of the tire in meters
+#define tireDiameter 0.68 // The diameter of the tire in meters
+#define NUM_LEDS 3
+#define ledPinR 14
+#define ledPinL 12
+#define beeperPin 32
+
 
 #ifdef SDSPI
 
@@ -21,8 +26,8 @@ Implement Wifi Capabillities
 #endif
 
 //Connect the project to the wifi for the website
-const char *ssid = "Manor's Wifi ";
-const char *password = "6677889900";
+const char *ssid = "Ido's S22 Ultra";
+const char *password = "12345678";
 
 // At first we include the needed libraries into our program
 #include <LiquidCrystal_I2C.h>
@@ -34,6 +39,7 @@ const char *password = "6677889900";
 #include <WiFiClient.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <FastLED.h>
 
 // Then we define some pin values.
 // We use #define because it is helpful for coding during development
@@ -42,22 +48,27 @@ const char *password = "6677889900";
 #define nextButton 27 // The pin number for the button used as the "next page" button
 #define prevButton 26 // The pin number for the button used as the "previous page" button
 #define selButton 25  // The pin number for the button used as the "Select" button
+#define cycleButton 33 // The pin number for the button used as the "Cycle" button
 
 int nextButtonState = 0; // The state of the button (pressed or not)
 int prevButtonState = 0; // The state of the button (pressed or not)
 int selButtonState = 0;  // The state of the button (pressed or not)
+int cycleButtonState = 0; // The state of the button (pressed or not)
 
 int nextButtonReading = 0; // The reading of the button (pressed or not)
 int prevButtonReading = 0; // The reading of the button (pressed or not)
 int selButtonReading = 0;  // The reading of the button (pressed or not)
+int cycleButtonReading = 0; // The reading of the button (pressed or not)
 
 int nextButtonLastState = 0; // The last state of the button (pressed or not)
 int prevButtonLastState = 0; // The last state of the button (pressed or not)
 int selButtonLastState = 0;  // The last state of the button (pressed or not)
+int cycleButtonLastState = 0; // The last state of the button (pressed or not)
 
 unsigned long nextButtonLastDebounceTime = 0; // The last time the button output a stable state
 unsigned long prevButtonLastDebounceTime = 0; // The last time the button output a stable state
 unsigned long selButtonLastDebounceTime = 0;  // The last time the button output a stable state
+unsigned long cycleButtonLastDebounceTime = 0; // The last time the button output a stable state
 
 unsigned long debounceDelay = 50; // The delay in which we consider the button state stable
 
@@ -67,6 +78,7 @@ float rpm;
 // float dtime;
 int velocity = 0;
 int bikeAngle = 0;
+int avgSpeed = 0;
 int lastVelocity = 0;
 unsigned long totalDistance = 0;
 unsigned long lastDistance = 0;
@@ -75,6 +87,8 @@ int lastDisplayMode = 0;
 unsigned long prevTime = 0;
 long unsigned int timer = 0;
 long unsigned int speedChange = 0;
+unsigned long blinkerTimer = 0;
+int ledCounter = 0;
 
 bool speedUnit = false; // false is km/h, true is mph.
 bool zeroVelocity = false;
@@ -87,12 +101,20 @@ unsigned long recordingTime = 0;
 unsigned long recordLogoTimer = 0;
 bool recordLogoState = true;
 
+bool rightBlinkerState = false;
+bool leftBlinkerState = false;
+
 WebServer server(80);
 
 Adafruit_MPU6050 mpu;
 
 LiquidCrystal_I2C lcd(0x3F, 16, 2); // set the LCD address to 0x27 for SIM or 0x3F IRL for a 16 chars and 2 line display
+
 File myFile;
+
+
+CRGB LedsRight[NUM_LEDS];
+CRGB LedsLeft[NUM_LEDS];
 
 
 byte recordStep1[] = {
@@ -126,6 +148,16 @@ void setup()
   rpm = 0;
   prevTime = 0;
 
+  FastLED.addLeds<NEOPIXEL, ledPinR>(LedsRight, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, ledPinL>(LedsLeft, NUM_LEDS);
+
+  for (int i = 0; i < NUM_LEDS; i++)
+  {
+    LedsLeft[i] = CRGB::Red;
+    LedsRight[i] = CRGB::Red;
+  }
+  FastLED.show();
+
     WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   Serial.println("");
@@ -146,21 +178,25 @@ void setup()
     Serial.println("MDNS responder started");
   }
   server.on("/", handleRoot);
+  server.on("/finish", calcAvgSpeed);
+  server.on("/finish", Endtrip);
 
   server.begin();
   Serial.println("HTTP server started");
 
 
 
-  attachInterrupt(digitalPinToInterrupt(12), magnet_detect, RISING);
+  attachInterrupt(digitalPinToInterrupt(13), magnet_detect, RISING);
 
   lcd.init(); // Initialize the LCD
-  pinMode(12, INPUT_PULLDOWN);
+  //pinMode(12, INPUT_PULLDOWN);
   pinMode(2, OUTPUT);
+  pinMode(beeperPin, OUTPUT);
   // Configure our button pins to act as input pins, with the internal pullup resistor active
   pinMode(nextButton, INPUT_PULLUP);
   pinMode(prevButton, INPUT_PULLUP);
   pinMode(selButton, INPUT_PULLUP);
+  pinMode(cycleButton, INPUT_PULLUP);
 
   lcd.createChar(0, recordStep1);
   lcd.createChar(1, recordStep2);
@@ -172,6 +208,12 @@ void setup()
   lcd.print("Initializing...");
   lcd.setCursor(1, 1);
   lcd.print("System Active!");
+  for (int i = 0; i < NUM_LEDS; i++)
+  {
+    LedsLeft[i] = CRGB::Green;
+    LedsRight[i] = CRGB::Green;
+  }
+  FastLED.show();
   delay(3000);
   lcd.clear();
 
@@ -269,7 +311,8 @@ void setup()
     Serial.println("5 Hz");
     break;
   }
-
+rightBlinkerState = false;
+leftBlinkerState = false;
 }
 
 // void displayModeByButton()
@@ -297,6 +340,7 @@ void setButtonsState()
   nextButtonReading = digitalRead(nextButton);
   prevButtonReading = digitalRead(prevButton);
   selButtonReading = digitalRead(selButton);
+  cycleButtonReading = digitalRead(cycleButton);
 
   if (nextButtonReading != nextButtonLastState)
   {
@@ -309,6 +353,10 @@ void setButtonsState()
   if (selButtonReading != selButtonLastState)
   {
     selButtonLastDebounceTime = millis();
+  }
+  if (cycleButtonReading != cycleButtonLastState)
+  {
+    cycleButtonLastDebounceTime = millis();
   }
 
   if ((millis() - nextButtonLastDebounceTime) > debounceDelay)
@@ -335,16 +383,66 @@ void setButtonsState()
       buttonChange = true;
     }
   }
-  
+  if ((millis() - cycleButtonLastDebounceTime) > debounceDelay)
+  {
+    if (cycleButtonReading != cycleButtonState)
+    {
+      cycleButtonState = cycleButtonReading;
+      buttonChange = true;
+    }
+  }  
 
   nextButtonLastState = nextButtonReading;
   prevButtonLastState = prevButtonReading;
   selButtonLastState = selButtonReading;
+  cycleButtonLastState = cycleButtonReading;
+
+  // Serial.print("nextButtonState: ");
+  // Serial.print(nextButtonState);
+  // Serial.print("   prevButtonState: ");
+  // Serial.print(prevButtonState);
+  // Serial.print("   selButtonState: ");
+  // Serial.print(selButtonState);
+  // Serial.print("   cycleButtonState: ");
+  // Serial.println(cycleButtonState);
+}
+
+void blinkers()
+{
+  if (selButtonState == LOW)
+  {
+    leftBlinkerState = !leftBlinkerState;
+    if (leftBlinkerState == true)
+    {
+      rightBlinkerState = false;
+    }
+    blinkerTimer = millis();
+    ledCounter = 0;
+    for (int i = 0; i < NUM_LEDS; i++)
+    {
+      LedsLeft[i] = CRGB::Black;
+    }
+  }
+
+  if (prevButtonState == LOW)
+  {
+    rightBlinkerState = !rightBlinkerState;
+    if (rightBlinkerState == true)
+    {
+      leftBlinkerState = false;
+    }
+    blinkerTimer = millis();
+    ledCounter = 0;
+    for (int i = 0; i < NUM_LEDS; i++)
+    {
+      LedsRight[i] = CRGB::Black;
+    }
+  }
 }
 
 void displayModeByButtonState()
 {
-  if (nextButtonState == LOW)
+  if (cycleButtonState == LOW)
   {
     displayMode++;
     if (displayMode > 2)
@@ -353,27 +451,32 @@ void displayModeByButtonState()
     }
     lcd.clear();
   }
-  if (prevButtonState == LOW)
-  {
-    displayMode--;
-    if (displayMode < 0)
-    {
-      displayMode = 2;
-    }
-    lcd.clear();
-  }
 }
+//   if (prevButtonState == LOW)
+//   {
+//     displayMode--;
+//     if (displayMode < 0)
+//     {
+//       displayMode = 2;
+//     }
+//     lcd.clear();
+//   }
+// }
 
 void setSpeed()
 {
-  if (rotation >= 2)
+  if (rotation >= 1)
   {
     timetaken = millis() - prevTime; // time in millisec
-    rpm = (1000 / timetaken) * 60;
+    rpm = 1/(timetaken/60000);
     prevTime = millis();
     rotation = 0;
-    velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 60; // ACTUAL CODE KM/hr
-  }
+    //velocity = rpm * tireDiameter * 0.001 * 3.14159265358979323846264338327950 * 60; // ACTUAL CODE KM/hr
+    //velocity = 2 * 3.14159265358979323846264338327950 * (tireDiameter / 2) * (rpm * 60) / 1000;
+    //velocity = 0.001885 * rpm * tireDiameter * 1000;
+    // velocity = 2 * 3.14159265358979323846264338327950 * (tireDiameter / 2) / 1000 / timetaken / 1000 / 60 / 60;
+    velocity = (3600000 / timetaken) * 2 * 3.14159265358979323846264338327950 * (tireDiameter / 2) / 1000;
+    }
 
   if (millis() - timer > 3000)
   {
@@ -424,20 +527,24 @@ void periodicLogToSD()
   }
 }
 
+void calcAvgSpeed(){
+  avgSpeed = totalDistance / (millis() / 1000);
+}
+
 void loop()
 {
   server.handleClient();
 
   setButtonsState();
 
-  if (selButtonState == LOW)
-  {
-    startRecording = !startRecording;
-    if (startRecording)
-    {
-      recordingTimer = millis();
-    }
-  }
+  // if (selButtonState == LOW)
+  // {
+  //   startRecording = !startRecording;
+  //   if (startRecording)
+  //   {
+  //     recordingTimer = millis();
+  //   }
+  // }
 
   if (startRecording)
   {
@@ -451,6 +558,7 @@ void loop()
   if (buttonChange == true)
   {
     displayModeByButtonState();
+    blinkers();
     buttonChange = false;
   }
   if (displayMode != lastDisplayMode)
@@ -459,11 +567,15 @@ void loop()
     lastDisplayMode = displayMode;
   }
 
-  setSpeed();
-  detectAngle();
-  setDistance();
 
-  switch (displayMode)
+
+  setSpeed();
+  // Serial.print("velocity: ");
+  // Serial.print(velocity);
+  // Serial.print("  Last velocity: ");
+  // Serial.println(lastVelocity);
+
+    switch (displayMode)
   {
   case 0:
     displaySpeed();
@@ -475,6 +587,93 @@ void loop()
     displayUnderConstruction();
     break;
   }
+
+  detectAngle();
+  setDistance();
+  // Serial.print("velocity: ");
+  // Serial.print(velocity);
+  // Serial.print("  Last velocity: ");
+  // Serial.println(lastVelocity);
+    Serial.println(WiFi.localIP());
+  if (nextButtonState == LOW)
+  {
+    digitalWrite(beeperPin, HIGH);
+    //Serial.println("beep");
+  }
+  else
+  {
+    digitalWrite(beeperPin, LOW);
+    //Serial.println("no beep");
+  }
+
+  // Serial.print("rightBlinkerState:  ");
+  // Serial.print(rightBlinkerState);
+  // Serial.print("   leftBlinkerState:  ");
+  // Serial.println(leftBlinkerState);
+  if (rightBlinkerState == true)
+  {
+    if (millis() - blinkerTimer > 250)
+    {
+      blinkerTimer = millis();
+      LedsRight[ledCounter] = CRGB::Orange;
+      FastLED.show();
+      if (ledCounter == NUM_LEDS-1)
+      {
+        ledCounter = 0;
+        for (int i = 0; i < NUM_LEDS; i++)
+        {
+          LedsRight[i] = CRGB::Black;
+        }
+        FastLED.show();
+      }
+      else
+      {
+        ledCounter++;
+      }
+    }
+  }
+  else
+  {
+    for (int i = 0; i < NUM_LEDS; i++)
+    {
+      LedsRight[i] = CRGB::Green;
+    }
+    FastLED.show();
+  }
+
+  if (leftBlinkerState == true)
+  {
+    if (millis() - blinkerTimer > 250)
+    {
+      blinkerTimer = millis();
+      LedsLeft[ledCounter] = CRGB::Orange;
+      FastLED.show();
+      if (ledCounter == NUM_LEDS-1)
+      {
+        ledCounter = 0;
+        for (int i = 0; i < NUM_LEDS; i++)
+        {
+          LedsLeft[i] = CRGB::Black;
+        }
+        FastLED.show();
+      }
+      else
+      {
+        ledCounter++;
+      }
+    }
+  }
+  else
+  {
+    for (int i = 0; i < NUM_LEDS; i++)
+    {
+      LedsLeft[i] = CRGB::Green;
+    }
+    FastLED.show();
+  }
+
+
+
 }
 
 void displayUnderConstruction(){
@@ -489,6 +688,10 @@ void displaySpeed()
   if ((velocity < 10 && lastVelocity > 9) || (velocity == 0 && zeroVelocity == false))
   {
     zeroVelocity = true;
+    lcd.clear();
+  }
+  if (velocity != lastVelocity)
+  {
     lcd.clear();
   }
 
@@ -537,38 +740,52 @@ void displayDistance()
 
 
 
-void magnet_detect() // Called whenever a magnet is detected
+IRAM_ATTR void magnet_detect() // Called whenever a magnet is detected
 {
+  static unsigned long last_interrupt_time = 0;
+  unsigned long interrupt_time = millis();
+  // If interrupts come faster than 200ms, assume it's a bounce and ignore
+  if (interrupt_time - last_interrupt_time > 100) 
+  {
   timer = millis();
   rotation++;
-  digitalWrite(2, HIGH);
-  //Serial.println("Magnet detected");
+  }
+  last_interrupt_time = interrupt_time;
 }
+
+  //digitalWrite(2, HIGH);
+  //Serial.println("Magnet detected");
+
 
 void detectAngle() 
 {
   /* Get new sensor events with the readings */
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
-  bikeAngle = g.gyro.x;
-  if(g.gyro.x>=5){
-    Serial.print("We're going up!");}
-  else if(g.gyro.x<=-5){
-    Serial.print("We're going down!");}
-  else{
-    Serial.print("We're not on a slope!");}
-  Serial.println("");
+  bikeAngle = (atan2(a.acceleration.y , a.acceleration.z) * 180.0 / PI) - 146;
+  Serial.print("Bike angle: ");
+  Serial.println(bikeAngle);
+}
+
+void formatData(){
+  myFile = SD.open("/data.txt");
+  if (myFile)
+  {
+    while (myFile.available()){
+      Serial.print((char)myFile.read());
+    }
+    myFile.close();
+  }
 }
 
 void handleRoot() {
   char msg[1500];
-
+ 
   snprintf(msg, 1500,
-           "<html>\
+  "<html>\
   <head>\
     <meta http-equiv='refresh' content='4'/>\
     <meta name='viewport' content='width=device-width, initial-scale=1'>\
-    <link rel='stylesheet' href='https://use.fontawesome.com/releases/v5.7.2/css/all.css' integrity='sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr' crossorigin='anonymous'>\
     <title>Bicycle auxiliary system</title>\
     <style>\
     html { font-family: Arial; display: inline-block; margin: 0px auto; text-align: center;}\
@@ -581,49 +798,82 @@ void handleRoot() {
   <body>\
     <h2>Bicycle auxiliary system!</h2>\
       <p>\
-      <span class='dht-labels'>Distance </span>\
+      <span class='dht-labels'>Total Distance: </span>\
         <span>%.2f</span>\
         <sup class='units'>km</sup>\
       </p>\
       <p>\
-        <span class='dht-labels'>Speed </span>\
+        <span class='dht-labels'>Speed: </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km/h</sup>\
+        </p>\
+        <button onclick='window.location.href = '/finish';'>Finish trip</button>\
+  </body>\
+</html>",\
+           totalDistance, velocity);\
+  server.send(200, "text/html", msg);
+}
+void Endtrip() {
+  char msg[1500];
+ 
+  snprintf(msg, 1500,
+  "<html>\
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.9.4/Chart.js'></script>\
+  <head>\
+    <meta http-equiv='refresh' content='4'/>\
+    <meta name='viewport' content='width=device-width, initial-scale=1'>\
+    <title>End trip</title>\
+    <style>\
+    html { font-family: Arial; display: inline-block; margin: 0px auto; text-align: center;}\
+    h2 { font-size: 3.0rem; }\
+    p { font-size: 3.0rem; }\
+    .units { font-size: 1.2rem; }\
+    .dht-labels{ font-size: 1.5rem; vertical-align:middle; padding-bottom: 15px;}\
+    </style>\
+  </head>\
+  <body>\
+  <canvas id='myChart' style='width:100%;max-width:600px'></canvas>\
+    <h2>Well done, you did great!!</h2>\
+      <p>\
+      <span class='dht-labels'>Total Distance: </span>\
+        <span>%.2f</span>\
+        <sup class='units'>km</sup>\
+      </p>\
+      <p>\
+        <span class='dht-labels'>Avg Speed: </span>\
         <span>%.2f</span>\
         <sup class='units'>km/h</sup>\
         </p>\
         <p>\
-        <span class='dht-labels'>Avg Speed </span>\
+        <span class='dht-labels'>Total trip time: </span>\
         <span>%.2f</span>\
-        <sup class='units'>km/h</sup>\
-      </p>\
+        <sup class='units'>Minutes</sup>\
+        </p>\
+  <script>\
+const xValues = [50,60,70,80,90,100,110,120,130,140,150];\
+const yValues = [7,8,8,9,9,9,10,11,14,14,15];\
+new Chart('myChart', {\
+  type: 'line',\
+  data: {\
+    labels: xValues,\
+    datasets: [{\
+      fill: false,\
+      lineTension: 0,\
+      backgroundColor: 'rgba(0,0,255,1.0)',\
+      borderColor: 'rgba(0,0,255,0.1)',\
+      data: yValues\
+    }]\
+  },\
+  options: {\
+    legend: {display: false},\
+    scales: {\
+      yAxes: [{ticks: {min: 6, max:16}}],\
+    }\
+  }\
+});\
+</script>\
   </body>\
-</html>",
-           totalDistance, velocity, velocity
-          );
+</html>",\
+           totalDistance, avgSpeed, (millis()/1000/60));\
   server.send(200, "text/html", msg);
 }
-// void loop()
-// {
-//   if (millis() - dtime > 1000) //to drop down to zero when braked.
-// 	velocity = (0.035) * rpm * 0.37699;  // ACTUAL CODE KM/hr
-// 	lcd.setCursor(1,0);
-// 	lcd.print("Speed:");
-//   lcd.setCursor(8,0);
-//   //lcd.setCursor(1,1);
-//   //lcd.print(analogRead(13));
-// }
-
-// void magnet_detect()//Called whenever a magnet is detected
-// {
-//   lcd.setCursor(1,1);
-//   lcd.print("Interrupt");
-//   rotation++;
-//   dtime = millis();
-//   if (rotation >= 2)
-//   {
-// 	timetaken = millis() - prevTime; //time in millisec
-// 	rpm = (1000 / timetaken) * 60;
-// 	prevTime = millis();
-// 	rotation = 0;
-// 	Serial.write(velocity);
-//   }
-// }
